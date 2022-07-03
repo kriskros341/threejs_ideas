@@ -1,19 +1,10 @@
 import './style.css'
 import * as THREE from "three"
-import { AmbientLight, CylinderGeometry, Mesh, MOUSE, Scene, SpotLight, Vector3 } from 'three';
+import { AmbientLight, CylinderGeometry, Mesh, MeshBasicMaterial, MOUSE, Scene, SpotLight, Vector3 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'; // ADDING CONTROLS LITERALLY REPAIRS RAYCASTING!!!~?!!1
+import { Hex, vec2, getMouseoverFn, around } from "./hex_toolkit"
 
 let started = false
-let around = [
-  [1, 0],
-  [-1, 0],
-  [0, 1],
-  [0, -1],
-  [-1, 1],
-  [1, -1]
-]
-
-type vec2 = {x: number, y:number}
 
 function select_hexes_around(coords: vec2): LivingHex[] {
   let neighbours: vec2[] = around.map(v => ({x: v[0], y: v[1]}))
@@ -26,36 +17,6 @@ function select_hexes_around(coords: vec2): LivingHex[] {
   })
   return tiles
 }
-class Hex extends Mesh {
-  //static objects: Hex[] = []
-  radius: number;
-  height: number
-  pos: {
-    x: number,
-    y: number
-  }
-  constructor(radius: number, height: number) {
-    const geo = new CylinderGeometry(radius, radius, height, 6)
-    const mat = new THREE.MeshStandardMaterial({color: 0xeeeeee})
-    super(geo, mat)
-    this.radius = radius;
-    this.height = height;
-    //Hex.objects.push(this)
-    this.pos = {
-      x: 0,
-      y: 0
-    }
-  }
-  placeOnGrid = (x: number, y: number, gridOffset: number) => {
-    this.pos = {
-      x: x,
-      y: y
-    }
-    this.position.set(
-      (gridOffset + this.radius) * (Math.sqrt(3) *  x + Math.sqrt(3)/2 * y), 0, (gridOffset+this.radius) * 3./2 * y
-    )
-  }
-}
 
 class LivingHex extends Hex {
   static livingObjects: LivingHex[] = [];
@@ -65,38 +26,37 @@ class LivingHex extends Hex {
   constructor(radius: number, height: number, isAlive: boolean, selected?: boolean) {
     super(radius, height)
     this.isAlive = isAlive
-    if(isAlive) {
-      this.material.color.set(0x00ffff)
-    }
     LivingHex.livingObjects.push(this)
     if(selected) {
       this.selected = true;
-      this.scale.set(1.1, 1.1, 1.1)
+      this.mesh.scale.set(1.1, 1.1, 1.1)
     }
   }
   deselect = () => {
     this.selected = false;
-    this.scale.set(1, 1, 1)
+    this.mesh.scale.set(1, 1, 1)
   }
   select = () => {
     this.selected = true;
-    this.scale.set(1.1, 1.1, 1.1)
+    this.mesh.scale.set(1.1, 1.1, 1.1)
   }
-  predictFutureTile = () => {
-    let n = select_hexes_around(this.pos)
-    let alive = n.filter(h => h.isAlive)
-    const choose = () => {
-      if (alive.length == 2) {
-        return true
-      }
-      if(this.isAlive && (alive.length == 3 || alive.length == 4)) {
-        return true
-      }
-      return false
+  choose = () => {
+    let neighbours = select_hexes_around(this.pos)
+    let alive = neighbours.filter(h => h.isAlive)
+    if (alive.length == 2) {
+      return true
     }
-    let l = new LivingHex(this.radius, this.height, choose(), this.selected)
-    l.placeOnGrid(this.pos.x, this.pos.y, 0.2)
-    return l
+    if(this.isAlive && (alive.length == 3)) {
+      return true
+    }
+    return false
+  }
+  update = () => {
+    if(this.isAlive) {
+      this.getMat().color.set(0x00ffff)
+    } else {
+      this.getMat().color.set(0xdddddd)
+    }
   }
 }
 
@@ -107,16 +67,15 @@ const updateHover = (hex: LivingHex) => {
     let l = select_hexes_around(hex.pos)
     l.forEach(t => t.isAlive = true)
   } else {
-    LivingHex.livingObjects.forEach(h => h.scale.set(1, 1, 1))
-    hex.scale.set(1.1, 1.1, 1.1)
-
+    LivingHex.livingObjects.forEach(h => h.mesh.scale.set(1, 1, 1))
+    hex.mesh.scale.set(1.1, 1.1, 1.1)
   }
 }
 
 
 const updateClick = (hex: LivingHex) => {
   hex.isAlive = true;
-  hex.material.color!.set(0x00ffff)
+  hex.getMat().color!.set(0x00ffff)
   started = true
   updateHover(hex)
 }
@@ -128,7 +87,8 @@ const createRenderer = () => {
   renderer.setClearColor(new THREE.Color(0, 0, 0));
   document.querySelector("#app")!.appendChild(renderer.domElement);
   renderer.domElement.onmousemove = () => {
-    let o = select_hex_with_mouse_over()
+    console.log("jd")
+    let o = select_Living_hex_with_mouse_over()
     o && updateHover(o)
   }
   renderer.domElement.onclick = () => {
@@ -148,7 +108,6 @@ const aspectRatio = innerWidth / innerHeight
 const createCamera = () => {
   const cam = new THREE.OrthographicCamera(
     //50/-2, 50/2, 50/2, 50/-2, -1000, 100
-    
     -aspectRatio * viewSize / 2, aspectRatio * viewSize / 2, 
     viewSize / 2, -viewSize / 2,
     -1000, 1000
@@ -176,22 +135,13 @@ onmousemove = (e) => {
     } 
 }
 
+
 let raycaster = new THREE.Raycaster();
 let intersects: THREE.Intersection[] = [];
-const select_hex_with_mouse_over = () => {
-  for(let o of LivingHex.livingObjects) {
-    raycaster.setFromCamera(pointer, cam);
-    intersects = raycaster.intersectObject(o);
-    if(intersects[0]) {
-      return o;
-    }
-  }
-  return null;
-}
 const select_Living_hex_with_mouse_over = () => {
   for(let o of LivingHex.livingObjects) {
     raycaster.setFromCamera(pointer, cam);
-    intersects = raycaster.intersectObject(o);
+    intersects = raycaster.intersectObject(o.mesh);
     if(intersects[0]) {
       return o;
     }
@@ -200,14 +150,14 @@ const select_Living_hex_with_mouse_over = () => {
 }
 
 const createHex = () => {
-  let mesh = new Hex(1, 0.1)
-  scene && scene.add(mesh)
-  return mesh
+  let hex = new Hex(1, 0.1)
+  scene && scene.add(hex.mesh)
+  return hex
 }
 const createLivingHex = () => {
-  let mesh = new LivingHex(1, 0.1, false)
-  scene && scene.add(mesh)
-  return mesh
+  let hex = new LivingHex(1, 0.1, false)
+  scene && scene.add(hex.mesh)
+  return hex
 }
 const scene = createScene()
 
@@ -223,7 +173,6 @@ const placeOnBoard = () => {
   const height = 10;
   const offset_width = -width / 2 + 2.8; //not sure why this constant is necessary... OOOH the offset
   const offset_height = -height / 2;
-
   for(let i = 0; i <= height; i++) {
     for(let j = 0; j <= width; j++) {
       let c = createLivingHex()
@@ -233,9 +182,6 @@ const placeOnBoard = () => {
 }
 
 
-const select_hexes_diagonally = (t: vec2): Hex[] => {
-  return Hex.objects.filter((t2) => t2.pos.x == t.x || t2.pos.y == t.y || -t2.pos.x-t2.pos.y == -t.x - t.y)
-}
 
 
 
@@ -264,6 +210,8 @@ const cam = createCamera()
 cam.rotation.set(Math.PI/2, 0, 0)
 cam.position.set(0, 5, 0)
 
+const select_hex_with_mouse_over = getMouseoverFn(renderer, cam)
+
 const controls = new OrbitControls(cam, renderer.domElement);
 controls.addEventListener("change", () => {
   console.log("c")
@@ -272,26 +220,26 @@ controls.enabled = false
 
 let t = 0
 let j = 0
+let lock = false
 setInterval(() => {
   if(started) {
     console.log("GENERATION", j)
-    let new_arr = LivingHex.livingObjects.map(o => o.predictFutureTile())
-    LivingHex.livingObjects.forEach((o: Mesh) => {
-      scene.remove(o)
-      o.material.dispose()
-      o.geometry.dispose()
-    })
-    new_arr.forEach(o => scene.add(o))
+    let new_arr = LivingHex.livingObjects.map(hex => hex.choose())
     console.log(new_arr)
-    LivingHex.livingObjects = new_arr
+    lock = true
+    LivingHex.livingObjects.forEach((hex, idx) => {
+        hex.isAlive = new_arr[idx]
+        hex.update()
+    })
+    lock = false
     j++;
   }
-}, 500)
+}, 300)
 
 const rerender = () => {
   requestAnimationFrame(rerender)
   //controls.update()
-  renderer.render(scene, cam);
+  !lock && renderer.render(scene, cam);
 }
 rerender()
 
